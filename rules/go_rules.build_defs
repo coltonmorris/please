@@ -58,12 +58,20 @@ def go_toolchain(name:str, url:str|dict = '', version:str = '', hashes:list = []
         visibility = visibility,
     )
 
-
+# TODO right now this doesn't do anything
+def go_hook(name: str, cmd: str, deps: list=None, tools: list|dict=None, outs:list):
+    return build_rule(
+        name = name,
+        cmd = cmd,
+        outs = outs,
+        deps = deps,
+        tools = tools,
+    )
 def go_library(name:str, srcs:list, asm_srcs:list=None, hdrs:list=None, out:str=None, deps:list=[],
                visibility:list=None, test_only:bool&testonly=False, complete:bool=True,
                _needs_transitive_deps=False, _all_srcs=False, cover:bool=True,
                filter_srcs:bool=True, _link_private:bool=False, _link_extra:bool=True, _abi:str=False,
-               _generate_import_config:bool=True, import_path:str='', labels:list=[]):
+               _generate_import_config:bool=True, import_path:str='', labels:list=[], hooks:list=[]):
     """Generates a Go library which can be reused by other rules.
 
     Args:
@@ -84,11 +92,38 @@ def go_library(name:str, srcs:list, asm_srcs:list=None, hdrs:list=None, out:str=
                     code that you never want to be instrumented.
       filter_srcs (bool): If True, filters source files through Go's standard build constraints.
       import_path (str): If set, this will override the import path of the generated go package.
+      hooks (list): A list of functions with the signature: f(name:string, srcs:list, deps:list).
+                    Each hook will return a build_rule that will be added as a dependency to this target.
     """
     out = out or name + '.a'
     link_labels = []
     src_labels = []
     private = out.startswith('_')
+    
+    for hook in hooks:
+        if not hook.startswith('/') and not hook.startswith(':'):
+            raise ParseError("The provided hook was not a target.")
+        # not working for some reason
+        # hook_cmd = get_command(canonicalise(hook))
+
+        # TODO need to somehow pass these sources to the hook target
+        #       maybe do this by using pre_build to pass in deps
+        #       and now that the deps are there the cmd will find the files
+        # TODO try by using add_dep
+
+        deps.append(build_rule(
+            name = f'_{name}#hook',
+            srcs = srcs + [hook],
+            # TODO can use get_command and set_command to alter the hook
+            cmd = f'cat $SRCS > {name}_hook-output.txt',
+            outs = [
+                f'{name}_hook-output.txt', # TODO rename output file in cmd to $OUTS
+            ],
+            
+            # TODO look into modifying the cmd in the pre_build
+            pre_build = lambda name: [add_dep(name, dep, False) for dep in deps],
+            # deps = srcs + deps + [hook],
+        ))
 
     if _generate_import_config:
         output = out.removesuffix(".a")
